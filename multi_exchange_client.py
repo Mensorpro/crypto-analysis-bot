@@ -1,6 +1,5 @@
 """
 Multi-exchange client — singleton with built-in caching.
-Uses Bybit (primary) with KuCoin fallback.
 """
 import ccxt.async_support as ccxt
 from typing import Dict, Optional
@@ -26,47 +25,17 @@ class MultiExchangeClient:
         if self._initialized:
             return
         self._initialized = True
-        # Primary: Bybit (no geo-restrictions)
-        self._primary = ccxt.bybit({
+        self.binance = ccxt.binance({
             "enableRateLimit": True,
             "options": {"defaultType": "spot"},
         })
-        # Fallback: KuCoin (no geo-restrictions)
-        self._fallback = ccxt.kucoin({
-            "enableRateLimit": True,
-            "options": {"defaultType": "spot"},
-        })
-        self._active = self._primary
-        self._active_name = "Bybit"
         self._cache = CacheManager(ttl_seconds=config.CACHE_TTL_SECONDS)
         self._markets_loaded = False
 
-    @property
-    def binance(self):
-        """Backward compat — returns the active exchange."""
-        return self._active
-
     async def _ensure_markets(self):
         if not self._markets_loaded:
-            # Try primary (Bybit) with retry
-            for attempt in range(3):
-                try:
-                    await self._active.load_markets()
-                    self._markets_loaded = True
-                    logger.info("%s markets loaded (%d symbols)", self._active_name, len(self._active.markets))
-                    return
-                except Exception as e:
-                    logger.warning("%s markets attempt %d failed: %s", self._active_name, attempt + 1, e)
-                    if attempt < 2:
-                        import asyncio
-                        await asyncio.sleep(2)
-            # Primary failed after retries — switch to fallback (KuCoin)
-            logger.warning("Switching to KuCoin fallback")
-            self._active = self._fallback
-            self._active_name = "KuCoin"
-            await self._active.load_markets()
+            await self.binance.load_markets()
             self._markets_loaded = True
-            logger.info("KuCoin markets loaded (%d symbols)", len(self._active.markets))
 
     async def fetch_ohlcv(self, symbol: str, timeframe: str = "15m",
                           limit: int = None) -> Dict:
@@ -84,7 +53,7 @@ class MultiExchangeClient:
                 symbol = self.convert_stock_symbol(symbol)
 
             await self._ensure_markets()
-            ohlcv = await self._active.fetch_ohlcv(symbol, timeframe, limit=limit)
+            ohlcv = await self.binance.fetch_ohlcv(symbol, timeframe, limit=limit)
 
             if not ohlcv:
                 raise ValueError(f"No data returned for {symbol}")
@@ -102,7 +71,7 @@ class MultiExchangeClient:
 
         except ccxt.BadSymbol:
             raise ValueError(
-                f"Symbol {symbol} not found on {self._active_name}. "
+                f"Symbol {symbol} not found on Binance. "
                 "Check the pair exists (e.g. BTC/USDT)."
             )
         except ccxt.NetworkError as e:
@@ -112,7 +81,7 @@ class MultiExchangeClient:
         except Exception as e:
             error_msg = str(e)
             if "does not have market symbol" in error_msg:
-                raise ValueError(f"Symbol {symbol} not available on {self._active_name}.")
+                raise ValueError(f"Symbol {symbol} not available.")
             raise ValueError(f"API error: {error_msg}")
 
     # ── Symbol classification ─────────────────────────────────────────
@@ -137,10 +106,9 @@ class MultiExchangeClient:
 
     async def close(self):
         """Close exchange connections and reset singleton."""
-        for ex in [self._primary, self._fallback]:
-            try:
-                await ex.close()
-            except Exception:
-                pass
+        try:
+            await self.binance.close()
+        except Exception:
+            pass
         MultiExchangeClient._instance = None
         self._initialized = False

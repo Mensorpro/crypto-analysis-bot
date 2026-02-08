@@ -64,7 +64,7 @@ def _display_name(symbol: str, market: str) -> str:
 def _market_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("💰 Crypto", callback_data="market_crypto")],
-        [InlineKeyboardButton("💱 Forex / Commodities", callback_data="market_forex")],
+        [InlineKeyboardButton("� Forex / Commodities", callback_data="market_forex")],
         [InlineKeyboardButton("🏦 DeFi", callback_data="market_defi")],
     ])
 
@@ -238,7 +238,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data[user_id] = {"market": market}
             symbols_map = {"crypto": CRYPTO_SYMBOLS, "forex": FOREX_SYMBOLS, "defi": DEFI_SYMBOLS}
             symbols = symbols_map.get(market, CRYPTO_SYMBOLS)
-            title = {"crypto": "💰 Select Crypto:", "forex": "💱 Select Pair:", "defi": "🏦 Select DeFi:"}.get(market, "Select:")
+            title = {"crypto": "💰 Select Crypto:", "forex": "� Select Pair:", "defi": "🏦 Select DeFi:"}.get(market, "Select:")
             keyboard = []
             for i in range(0, len(symbols), 2):
                 row = [InlineKeyboardButton(_display_name(symbols[i], market), callback_data=f"sym_{symbols[i]}")]
@@ -287,7 +287,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         symbols_map = {"crypto": CRYPTO_SYMBOLS, "forex": FOREX_SYMBOLS, "defi": DEFI_SYMBOLS}
         symbols = symbols_map.get(market, CRYPTO_SYMBOLS)
-        title = {"crypto": "💰 Select Crypto:", "forex": "💱 Select Pair:", "defi": "🏦 Select DeFi:"}.get(market, "Select:")
+        title = {"crypto": "💰 Select Crypto:", "forex": "� Select Pair:", "defi": "🏦 Select DeFi:"}.get(market, "Select:")
 
         keyboard = []
         for i in range(0, len(symbols), 2):
@@ -412,13 +412,13 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     market = state["market"]
 
-    # ── Validate symbol exists on exchange ──
+    # ── Validate symbol exists on Binance ──
     try:
         client = MultiExchangeClient()
         await client._ensure_markets()
-        if symbol not in client._active.markets:
+        if symbol not in client.binance.markets:
             await update.message.reply_text(
-                f"❌ <b>{raw}</b> not found on {client._active_name}.\n"
+                f"❌ <b>{raw}</b> not found on Binance.\n"
                 f"Check spelling and try again (e.g. <b>PEPE</b>, <b>ARB</b>)",
                 parse_mode="HTML",
             )
