@@ -412,11 +412,11 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     market = state["market"]
 
-    # ── Validate symbol exists on Binance ──
+    # ── Validate symbol exists on exchange ──
     try:
         client = MultiExchangeClient()
         await client._ensure_markets()
-        if symbol not in client.binance.markets:
+        if symbol not in client._active.markets:
             await update.message.reply_text(
                 f"❌ <b>{raw}</b> not found on Binance.\n"
                 f"Check spelling and try again (e.g. <b>PEPE</b>, <b>ARB</b>)",

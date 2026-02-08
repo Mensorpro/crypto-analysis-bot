@@ -1,5 +1,6 @@
 """
 Multi-exchange client — singleton with built-in caching.
+Uses Bybit (primary) with Binance fallback.
 """
 import ccxt.async_support as ccxt
 from typing import Dict, Optional
@@ -25,16 +26,35 @@ class MultiExchangeClient:
         if self._initialized:
             return
         self._initialized = True
-        self.binance = ccxt.binance({
+        # Primary: Bybit (no geo-restrictions)
+        self._primary = ccxt.bybit({
             "enableRateLimit": True,
             "options": {"defaultType": "spot"},
         })
+        # Fallback: Binance (may be blocked in some regions)
+        self._fallback = ccxt.binance({
+            "enableRateLimit": True,
+            "options": {"defaultType": "spot"},
+        })
+        self._active = self._primary
+        self._active_name = "Bybit"
         self._cache = CacheManager(ttl_seconds=config.CACHE_TTL_SECONDS)
         self._markets_loaded = False
 
+    @property
+    def binance(self):
+        """Backward compat — returns the active exchange."""
+        return self._active
+
     async def _ensure_markets(self):
         if not self._markets_loaded:
-            await self.binance.load_markets()
+            try:
+                await self._active.load_markets()
+            except Exception as e:
+                logger.warning("%s markets failed: %s — switching to fallback", self._active_name, e)
+                self._active = self._fallback
+                self._active_name = "Binance"
+                await self._active.load_markets()
             self._markets_loaded = True
 
     async def fetch_ohlcv(self, symbol: str, timeframe: str = "15m",
@@ -53,7 +73,7 @@ class MultiExchangeClient:
                 symbol = self.convert_stock_symbol(symbol)
 
             await self._ensure_markets()
-            ohlcv = await self.binance.fetch_ohlcv(symbol, timeframe, limit=limit)
+            ohlcv = await self._active.fetch_ohlcv(symbol, timeframe, limit=limit)
 
             if not ohlcv:
                 raise ValueError(f"No data returned for {symbol}")
@@ -71,7 +91,7 @@ class MultiExchangeClient:
 
         except ccxt.BadSymbol:
             raise ValueError(
-                f"Symbol {symbol} not found on Binance. "
+                f"Symbol {symbol} not found on {self._active_name}. "
                 "Check the pair exists (e.g. BTC/USDT)."
             )
         except ccxt.NetworkError as e:
@@ -81,7 +101,7 @@ class MultiExchangeClient:
         except Exception as e:
             error_msg = str(e)
             if "does not have market symbol" in error_msg:
-                raise ValueError(f"Symbol {symbol} not available.")
+                raise ValueError(f"Symbol {symbol} not available on {self._active_name}.")
             raise ValueError(f"API error: {error_msg}")
 
     # ── Symbol classification ─────────────────────────────────────────
@@ -106,9 +126,10 @@ class MultiExchangeClient:
 
     async def close(self):
         """Close exchange connections and reset singleton."""
-        try:
-            await self.binance.close()
-        except Exception:
-            pass
+        for ex in [self._primary, self._fallback]:
+            try:
+                await ex.close()
+            except Exception:
+                pass
         MultiExchangeClient._instance = None
         self._initialized = False

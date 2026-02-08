@@ -2,6 +2,12 @@
 
 A Telegram bot delivering institutional-grade technical analysis for crypto, forex, and DeFi tokens.
 
+## Links
+
+- **GitHub:** https://github.com/Mensorpro/crypto-analysis-bot
+- **Render Dashboard:** https://dashboard.render.com/web/srv-d64gipa4d50c73ef1dog
+- **Live URL:** https://crypto-analysis-bot-1u2x.onrender.com
+
 ## What It Does
 
 Every analysis runs a **10-step pipeline**:
