@@ -1,6 +1,6 @@
 """
 Multi-exchange client — singleton with built-in caching.
-Uses Bybit (primary) with Binance fallback.
+Uses Bybit (primary) with KuCoin fallback.
 """
 import ccxt.async_support as ccxt
 from typing import Dict, Optional
@@ -31,8 +31,8 @@ class MultiExchangeClient:
             "enableRateLimit": True,
             "options": {"defaultType": "spot"},
         })
-        # Fallback: Binance (may be blocked in some regions)
-        self._fallback = ccxt.binance({
+        # Fallback: KuCoin (no geo-restrictions)
+        self._fallback = ccxt.kucoin({
             "enableRateLimit": True,
             "options": {"defaultType": "spot"},
         })
@@ -48,14 +48,25 @@ class MultiExchangeClient:
 
     async def _ensure_markets(self):
         if not self._markets_loaded:
-            try:
-                await self._active.load_markets()
-            except Exception as e:
-                logger.warning("%s markets failed: %s — switching to fallback", self._active_name, e)
-                self._active = self._fallback
-                self._active_name = "Binance"
-                await self._active.load_markets()
+            # Try primary (Bybit) with retry
+            for attempt in range(3):
+                try:
+                    await self._active.load_markets()
+                    self._markets_loaded = True
+                    logger.info("%s markets loaded (%d symbols)", self._active_name, len(self._active.markets))
+                    return
+                except Exception as e:
+                    logger.warning("%s markets attempt %d failed: %s", self._active_name, attempt + 1, e)
+                    if attempt < 2:
+                        import asyncio
+                        await asyncio.sleep(2)
+            # Primary failed after retries — switch to fallback (KuCoin)
+            logger.warning("Switching to KuCoin fallback")
+            self._active = self._fallback
+            self._active_name = "KuCoin"
+            await self._active.load_markets()
             self._markets_loaded = True
+            logger.info("KuCoin markets loaded (%d symbols)", len(self._active.markets))
 
     async def fetch_ohlcv(self, symbol: str, timeframe: str = "15m",
                           limit: int = None) -> Dict:

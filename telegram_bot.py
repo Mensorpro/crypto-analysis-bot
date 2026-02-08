@@ -418,7 +418,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await client._ensure_markets()
         if symbol not in client._active.markets:
             await update.message.reply_text(
-                f"❌ <b>{raw}</b> not found on Binance.\n"
+                f"❌ <b>{raw}</b> not found on {client._active_name}.\n"
                 f"Check spelling and try again (e.g. <b>PEPE</b>, <b>ARB</b>)",
                 parse_mode="HTML",
             )
