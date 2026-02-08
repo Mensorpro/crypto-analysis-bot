@@ -11,6 +11,9 @@ Features:
 """
 import asyncio
 import logging
+import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from multi_exchange_client import MultiExchangeClient
@@ -443,12 +446,37 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 # Entry point
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Health-check server (keeps Render free tier happy)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, *args):
+        pass  # Silence health-check logs
+
+
+def _start_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    logger.info("Health server on port %d", port)
+
+
 def main():
     from config import TELEGRAM_BOT_TOKEN
 
     if not TELEGRAM_BOT_TOKEN:
         print("ERROR: Set TELEGRAM_BOT_TOKEN in your .env file.")
         return
+
+    # Start health-check server for Render
+    _start_health_server()
 
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
