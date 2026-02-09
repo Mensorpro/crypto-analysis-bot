@@ -149,9 +149,10 @@ def api_errors():
     return jsonify(get_recent_errors(limit))
 
 
+@app.route("/health")
 @app.route("/api/ping")
-def api_ping():
-    """Health check."""
+def health():
+    """Health / uptime check — no auth required."""
     return jsonify({"status": "ok"})
 
 
