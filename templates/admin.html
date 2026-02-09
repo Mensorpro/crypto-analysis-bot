@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crypto Bot Admin</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d;
+  --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+  --green: #3fb950; --red: #f85149; --orange: #d29922; --purple: #bc8cff;
+  --radius: 10px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+       background: var(--bg); color: var(--text); line-height: 1.5; }
+
+/* Layout */
+.header { background: var(--surface); border-bottom: 1px solid var(--border);
+           padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+.header h1 { font-size: 18px; font-weight: 600; }
+.header h1 span { color: var(--accent); }
+.header .meta { font-size: 12px; color: var(--muted); }
+.container { max-width: 1440px; margin: 0 auto; padding: 20px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 4px; margin-bottom: 20px; background: var(--surface);
+        border-radius: var(--radius); padding: 4px; border: 1px solid var(--border); }
+.tab { padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 13px;
+       color: var(--muted); transition: all .2s; border: none; background: none; }
+.tab:hover { color: var(--text); }
+.tab.active { background: var(--accent); color: #fff; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* Cards grid */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+         gap: 14px; margin-bottom: 24px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border);
+             border-radius: var(--radius); padding: 18px; }
+.stat-card .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+.stat-card .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.stat-card .value.green { color: var(--green); }
+.stat-card .value.red { color: var(--red); }
+.stat-card .value.accent { color: var(--accent); }
+.stat-card .value.orange { color: var(--orange); }
+
+/* Chart containers */
+.chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 24px; }
+@media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
+.chart-box { background: var(--surface); border: 1px solid var(--border);
+             border-radius: var(--radius); padding: 18px; }
+.chart-box h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); }
+.chart-box canvas { width: 100% !important; height: 250px !important; }
+
+/* Tables */
+.table-box { background: var(--surface); border: 1px solid var(--border);
+             border-radius: var(--radius); padding: 18px; margin-bottom: 24px; overflow-x: auto; }
+.table-box h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 8px 10px; color: var(--muted); font-weight: 500;
+     border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+tr:hover td { background: rgba(88,166,255,.04); }
+
+/* Verdict badges */
+.badge { padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+.badge.buy { background: rgba(63,185,80,.15); color: var(--green); }
+.badge.sell { background: rgba(248,81,73,.15); color: var(--red); }
+.badge.neutral { background: rgba(139,148,158,.15); color: var(--muted); }
+
+/* Accuracy section */
+.acc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
+@media (max-width: 700px) { .acc-grid { grid-template-columns: 1fr; } }
+.acc-card { background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 18px; text-align: center; }
+.acc-card .window { font-size: 13px; color: var(--accent); font-weight: 600; margin-bottom: 8px; }
+.acc-card .big { font-size: 36px; font-weight: 700; }
+.acc-card .detail { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* Loading & empty */
+.loading { text-align: center; padding: 40px; color: var(--muted); }
+.empty { text-align: center; padding: 30px; color: var(--muted); font-style: italic; }
+
+/* Refresh */
+.refresh-btn { background: none; border: 1px solid var(--border); color: var(--accent);
+               padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+.refresh-btn:hover { background: var(--surface); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📊 <span>Crypto Bot</span> Admin</h1>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <span class="meta" id="lastUpdate">—</span>
+    <button class="refresh-btn" onclick="loadAll()">⟳ Refresh</button>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- Tabs -->
+<div class="tabs">
+  <button class="tab active" data-tab="overview">Overview</button>
+  <button class="tab" data-tab="usage">Usage</button>
+  <button class="tab" data-tab="users">Users</button>
+  <button class="tab" data-tab="accuracy">Accuracy</button>
+  <button class="tab" data-tab="activity">Activity</button>
+  <button class="tab" data-tab="errors">Errors</button>
+</div>
+
+<!-- ═══════════ OVERVIEW ═══════════ -->
+<div class="panel active" id="tab-overview">
+  <div class="stats" id="overviewCards"></div>
+  <div class="chart-row">
+    <div class="chart-box">
+      <h3>Daily Usage (30 days)</h3>
+      <canvas id="chartDaily"></canvas>
+    </div>
+    <div class="chart-box">
+      <h3>Signal Distribution</h3>
+      <canvas id="chartSignals"></canvas>
+    </div>
+  </div>
+  <div class="chart-row">
+    <div class="table-box">
+      <h3>Top Coins</h3>
+      <table id="coinsTable"><thead><tr><th>Symbol</th><th>Analyses</th><th>Avg Score</th><th>Avg Confidence</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="table-box">
+      <h3>Timeframe Usage</h3>
+      <table id="tfTable"><thead><tr><th>Timeframe</th><th>Count</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ USAGE ═══════════ -->
+<div class="panel" id="tab-usage">
+  <div class="chart-row">
+    <div class="chart-box">
+      <h3>Daily Usage (30 days)</h3>
+      <canvas id="chartDaily2"></canvas>
+    </div>
+    <div class="chart-box">
+      <h3>Hourly Distribution</h3>
+      <canvas id="chartHourly"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ USERS ═══════════ -->
+<div class="panel" id="tab-users">
+  <div class="table-box">
+    <h3>All Users</h3>
+    <table id="usersTable">
+      <thead><tr><th>ID</th><th>Username</th><th>Name</th><th>Analyses</th><th>Fav Coin</th><th>Fav TF</th><th>First Seen</th><th>Last Seen</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ ACCURACY ═══════════ -->
+<div class="panel" id="tab-accuracy">
+  <div class="acc-grid" id="accCards"></div>
+  <div class="chart-row">
+    <div class="table-box">
+      <h3>Accuracy by Verdict (4h window)</h3>
+      <table id="accVerdictTable">
+        <thead><tr><th>Verdict</th><th>Checked</th><th>Correct</th><th>Accuracy</th><th>Avg Change</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="table-box">
+      <h3>Accuracy by Coin (4h window)</h3>
+      <table id="accCoinTable">
+        <thead><tr><th>Coin</th><th>Checked</th><th>Correct</th><th>Accuracy</th><th>Avg Change</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="table-box">
+    <h3>Accuracy by Confidence Level (4h window)</h3>
+    <table id="accConfTable">
+      <thead><tr><th>Confidence</th><th>Checked</th><th>Correct</th><th>Accuracy</th><th>Avg Change</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ ACTIVITY ═══════════ -->
+<div class="panel" id="tab-activity">
+  <div class="table-box">
+    <h3>Recent Analyses</h3>
+    <table id="activityTable">
+      <thead><tr><th>Time</th><th>Symbol</th><th>Timeframe</th><th>Score</th><th>Verdict</th><th>Confidence</th><th>Price</th><th>Trend</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ ERRORS ═══════════ -->
+<div class="panel" id="tab-errors">
+  <div class="table-box">
+    <h3>Recent Errors</h3>
+    <table id="errorsTable">
+      <thead><tr><th>Time</th><th>Type</th><th>Symbol</th><th>Message</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+</div><!-- container -->
+
+<script>
+// ═════════════════ State ═════════════════
+let charts = {};
+const API = '';
+const token = new URLSearchParams(location.search).get('token') || '';
+const qs = token ? `?token=${token}` : '';
+
+// ═════════════════ Tabs ═════════════════
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('tab-' + t.dataset.tab).classList.add('active');
+  });
+});
+
+// ═════════════════ Helpers ═════════════════
+async function api(path) {
+  try {
+    const r = await fetch(API + path + qs);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })
+       + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+}
+
+function badge(verdict) {
+  if (!verdict) return '';
+  const v = verdict.toLowerCase();
+  let cls = 'neutral';
+  if (v.includes('buy') || v.includes('bullish')) cls = 'buy';
+  if (v.includes('sell') || v.includes('bearish')) cls = 'sell';
+  return `<span class="badge ${cls}">${verdict}</span>`;
+}
+
+function colorVal(n) {
+  if (n > 0) return 'green';
+  if (n < 0) return 'red';
+  return '';
+}
+
+function accColor(pct) {
+  if (pct >= 60) return 'var(--green)';
+  if (pct >= 45) return 'var(--orange)';
+  return 'var(--red)';
+}
+
+const CHART_DEFAULTS = {
+  responsive: true, maintainAspectRatio: false,
+  plugins: { legend: { labels: { color: '#8b949e', font: { size: 11 } } } },
+  scales: {
+    x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+    y: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+  }
+};
+
+function makeChart(id, type, data, opts = {}) {
+  if (charts[id]) charts[id].destroy();
+  const ctx = document.getElementById(id);
+  if (!ctx) return;
+  charts[id] = new Chart(ctx, {
+    type, data,
+    options: { ...CHART_DEFAULTS, ...opts }
+  });
+}
+
+// ═════════════════ Load data ═════════════════
+async function loadOverview() {
+  const d = await api('/api/overview');
+  if (!d) return;
+  document.getElementById('overviewCards').innerHTML = `
+    <div class="stat-card"><div class="label">Total Analyses</div><div class="value accent">${d.total_analyses}</div></div>
+    <div class="stat-card"><div class="label">Today</div><div class="value">${d.analyses_today}</div></div>
+    <div class="stat-card"><div class="label">This Week</div><div class="value">${d.analyses_week}</div></div>
+    <div class="stat-card"><div class="label">Total Users</div><div class="value accent">${d.total_users}</div></div>
+    <div class="stat-card"><div class="label">Active (24h)</div><div class="value green">${d.active_users_24h}</div></div>
+    <div class="stat-card"><div class="label">Errors Today</div><div class="value ${d.errors_today > 0 ? 'red' : 'green'}">${d.errors_today}</div></div>
+    <div class="stat-card"><div class="label">Success Rate</div><div class="value ${d.success_rate >= 95 ? 'green' : 'orange'}">${d.success_rate}%</div></div>
+  `;
+}
+
+async function loadDailyChart(canvasId) {
+  const d = await api('/api/usage-daily');
+  if (!d || !d.length) return;
+  makeChart(canvasId, 'bar', {
+    labels: d.map(x => x.day),
+    datasets: [{ label: 'Analyses', data: d.map(x => x.count),
+      backgroundColor: 'rgba(88,166,255,.5)', borderColor: '#58a6ff', borderWidth: 1, borderRadius: 4 }]
+  });
+}
+
+async function loadHourlyChart() {
+  const d = await api('/api/usage-hourly');
+  if (!d || !d.length) return;
+  const labels = Array.from({length:24}, (_,i) => `${String(i).padStart(2,'0')}:00`);
+  const data = labels.map((_,i) => { const m = d.find(x => x.hour === i); return m ? m.count : 0; });
+  makeChart('chartHourly', 'line', {
+    labels,
+    datasets: [{ label: 'Analyses', data, borderColor: '#bc8cff', backgroundColor: 'rgba(188,140,255,.15)',
+      fill: true, tension: .4, pointRadius: 2 }]
+  });
+}
+
+async function loadSignalChart() {
+  const d = await api('/api/signal-distribution');
+  if (!d || !d.length) return;
+  const colors = d.map(x => {
+    const v = (x.verdict || '').toLowerCase();
+    if (v.includes('strong buy')) return '#3fb950';
+    if (v.includes('buy') || v.includes('bullish')) return '#56d364';
+    if (v.includes('strong sell')) return '#f85149';
+    if (v.includes('sell') || v.includes('bearish')) return '#da3633';
+    return '#8b949e';
+  });
+  makeChart('chartSignals', 'doughnut', {
+    labels: d.map(x => x.verdict),
+    datasets: [{ data: d.map(x => x.count), backgroundColor: colors, borderWidth: 0 }]
+  }, { scales: {}, plugins: { legend: { position: 'right', labels: { color: '#8b949e', font: { size: 11 } } } } });
+}
+
+async function loadCoins() {
+  const d = await api('/api/popular-coins');
+  const tb = document.querySelector('#coinsTable tbody');
+  if (!d || !d.length) { tb.innerHTML = '<tr><td colspan="4" class="empty">No data yet</td></tr>'; return; }
+  tb.innerHTML = d.map(r => `<tr>
+    <td><strong>${r.symbol}</strong></td><td>${r.count}</td>
+    <td style="color:${r.avg_score > 0 ? 'var(--green)' : r.avg_score < 0 ? 'var(--red)' : 'var(--muted)'}">${r.avg_score}</td>
+    <td>${r.avg_conf}%</td></tr>`).join('');
+}
+
+async function loadTimeframes() {
+  const d = await api('/api/timeframes');
+  const tb = document.querySelector('#tfTable tbody');
+  if (!d || !d.length) { tb.innerHTML = '<tr><td colspan="2" class="empty">No data yet</td></tr>'; return; }
+  tb.innerHTML = d.map(r => `<tr><td>${r.timeframe}</td><td>${r.count}</td></tr>`).join('');
+}
+
+async function loadUsers() {
+  const d = await api('/api/users');
+  const tb = document.querySelector('#usersTable tbody');
+  if (!d || !d.length) { tb.innerHTML = '<tr><td colspan="8" class="empty">No users yet</td></tr>'; return; }
+  tb.innerHTML = d.map(r => `<tr>
+    <td>${r.telegram_id}</td><td>${r.username || '—'}</td><td>${r.first_name || '—'}</td>
+    <td><strong>${r.total_analyses || 0}</strong></td><td>${r.fav_symbol || '—'}</td><td>${r.fav_timeframe || '—'}</td>
+    <td>${fmtDate(r.first_seen)}</td><td>${fmtDate(r.last_seen)}</td></tr>`).join('');
+}
+
+async function loadAccuracy() {
+  const d = await api('/api/accuracy');
+  if (!d) return;
+  const container = document.getElementById('accCards');
+  const windows = ['1h', '4h', '24h'];
+  container.innerHTML = windows.map(w => {
+    const s = d[w] || {};
+    return `<div class="acc-card">
+      <div class="window">${w} Window</div>
+      <div class="big" style="color:${accColor(s.direction_accuracy)}">${s.direction_accuracy || 0}%</div>
+      <div class="detail">${s.total_checked || 0} signals checked</div>
+      <div class="detail">Avg change: ${s.avg_price_change || 0}%</div>
+      <div class="detail">Target hit: ${s.target_hit_rate || 0}% · Stop hit: ${s.stop_hit_rate || 0}%</div>
+    </div>`;
+  }).join('');
+
+  // Verdict table
+  const vd = await api('/api/accuracy/by-verdict');
+  const vtb = document.querySelector('#accVerdictTable tbody');
+  if (vd && vd.length) {
+    vtb.innerHTML = vd.map(r => `<tr><td>${badge(r.verdict)}</td><td>${r.total}</td><td>${r.correct}</td>
+      <td style="color:${accColor(r.accuracy_pct)}">${r.accuracy_pct}%</td>
+      <td style="color:${r.avg_change >= 0 ? 'var(--green)' : 'var(--red)'}">${r.avg_change}%</td></tr>`).join('');
+  } else { vtb.innerHTML = '<tr><td colspan="5" class="empty">No accuracy data yet</td></tr>'; }
+
+  // Coin table
+  const cd = await api('/api/accuracy/by-coin');
+  const ctb = document.querySelector('#accCoinTable tbody');
+  if (cd && cd.length) {
+    ctb.innerHTML = cd.map(r => `<tr><td><strong>${r.symbol}</strong></td><td>${r.total}</td><td>${r.correct}</td>
+      <td style="color:${accColor(r.accuracy_pct)}">${r.accuracy_pct}%</td>
+      <td style="color:${r.avg_change >= 0 ? 'var(--green)' : 'var(--red)'}">${r.avg_change}%</td></tr>`).join('');
+  } else { ctb.innerHTML = '<tr><td colspan="5" class="empty">Not enough data yet</td></tr>'; }
+
+  // Confidence table
+  const cfd = await api('/api/accuracy/by-confidence');
+  const cftb = document.querySelector('#accConfTable tbody');
+  if (cfd && cfd.length) {
+    cftb.innerHTML = cfd.map(r => `<tr><td>${r.confidence_bucket}</td><td>${r.total}</td><td>${r.correct}</td>
+      <td style="color:${accColor(r.accuracy_pct)}">${r.accuracy_pct}%</td>
+      <td style="color:${r.avg_change >= 0 ? 'var(--green)' : 'var(--red)'}">${r.avg_change}%</td></tr>`).join('');
+  } else { cftb.innerHTML = '<tr><td colspan="5" class="empty">No data yet</td></tr>'; }
+}
+
+async function loadActivity() {
+  const d = await api('/api/activity');
+  const tb = document.querySelector('#activityTable tbody');
+  if (!d || !d.length) { tb.innerHTML = '<tr><td colspan="8" class="empty">No activity yet</td></tr>'; return; }
+  tb.innerHTML = d.map(r => `<tr>
+    <td>${fmtDate(r.created_at)}</td><td><strong>${r.symbol}</strong></td><td>${r.timeframe}</td>
+    <td style="color:${r.score > 0 ? 'var(--green)' : r.score < 0 ? 'var(--red)' : 'var(--muted)'}">${r.score || 0}</td>
+    <td>${badge(r.verdict)}</td><td>${r.confidence || 0}%</td>
+    <td>${r.price_at_signal ? '$' + Number(r.price_at_signal).toLocaleString() : '—'}</td>
+    <td>${r.trend_overall || '—'}</td></tr>`).join('');
+}
+
+async function loadErrors() {
+  const d = await api('/api/errors');
+  const tb = document.querySelector('#errorsTable tbody');
+  if (!d || !d.length) { tb.innerHTML = '<tr><td colspan="4" class="empty">No errors 🎉</td></tr>'; return; }
+  tb.innerHTML = d.map(r => `<tr>
+    <td>${fmtDate(r.created_at)}</td><td>${r.error_type}</td><td>${r.symbol || '—'}</td>
+    <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis">${r.error_message || ''}</td></tr>`).join('');
+}
+
+// ═════════════════ Init ═════════════════
+async function loadAll() {
+  document.getElementById('lastUpdate').textContent = 'Loading...';
+  await Promise.all([
+    loadOverview(), loadDailyChart('chartDaily'), loadDailyChart('chartDaily2'),
+    loadHourlyChart(), loadSignalChart(), loadCoins(), loadTimeframes(),
+    loadUsers(), loadAccuracy(), loadActivity(), loadErrors(),
+  ]);
+  document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+loadAll();
+setInterval(loadAll, 120000); // Auto-refresh every 2 min
+</script>
+</body>
+</html>

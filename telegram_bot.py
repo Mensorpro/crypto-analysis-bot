@@ -12,12 +12,26 @@ Features:
 import asyncio
 import logging
 import os
+import time
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from multi_exchange_client import MultiExchangeClient
-from main import analyze_coin
+from main import analyze_coin, analyze_coin_raw
+from formatter import format_analysis as _fmt
+import analytics
+
+
+def _format_raw(raw_data: dict) -> str:
+    """Helper: call format_analysis with unpacked raw data dict."""
+    return _fmt(
+        raw_data["symbol"], raw_data["timeframe"],
+        raw_data["indicators"], raw_data["levels"],
+        raw_data["trend"], raw_data["flow"],
+        raw_data["scenarios"], raw_data["patterns"],
+        raw_data["signal"], raw_data["session"],
+    )
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -74,6 +88,13 @@ def _market_keyboard() -> InlineKeyboardMarkup:
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    # Track user start
+    await analytics.async_log_error(
+        error_type="cmd_start",
+        details=f"User {user.id} started the bot",
+        telegram_id=user.id,
+    )
     await update.message.reply_text(
         "<b>🚀 Crypto Analysis Bot</b>\n\n"
         "Get institutional-grade technical analysis right here.\n\n"
@@ -114,12 +135,28 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_quick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quick scan of top coins."""
     coins = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
+    user = update.effective_user
     await update.message.reply_text("⏳ <b>Quick scan starting…</b>", parse_mode="HTML")
     for coin in coins:
+        t0 = time.time()
         try:
-            result = await analyze_coin(coin, "15m")
+            raw_data = await analyze_coin_raw(coin, "15m")
+            result = _format_raw(raw_data)
+            elapsed = int((time.time() - t0) * 1000)
+            await analytics.async_log_analysis(
+                user_id=user.id, username=user.username, first_name=user.first_name,
+                symbol=coin, timeframe="15m", source="telegram_quick",
+                signal=raw_data.get("signal"), indicators=raw_data.get("indicators"),
+                levels=raw_data.get("levels"), trend=raw_data.get("trend"),
+                flow=raw_data.get("flow"), scenarios=raw_data.get("scenarios"),
+                response_time_ms=elapsed,
+            )
             await _send_analysis(update.message, result, coin, "crypto")
         except Exception as e:
+            await analytics.async_log_error(
+                error_type="quick_scan_error", details=str(e),
+                telegram_id=user.id, symbol=coin, timeframe="15m",
+            )
             await update.message.reply_text(f"❌ {coin}: {e}")
 
 
@@ -137,17 +174,36 @@ async def _run_analysis_direct(update: Update, context: ContextTypes.DEFAULT_TYP
         symbol = raw
 
     timeframe = context.args[1] if len(context.args) > 1 else "15m"
+    user = update.effective_user
 
     msg = await update.message.reply_text(
         f"⏳ Analyzing <b>{symbol}</b> on <b>{timeframe}</b>…",
         parse_mode="HTML",
     )
 
+    t0 = time.time()
     try:
-        result = await analyze_coin(symbol, timeframe)
+        raw_data = await analyze_coin_raw(symbol, timeframe)
+        result = _format_raw(raw_data)
+        elapsed = int((time.time() - t0) * 1000)
+
+        # Log to Supabase
+        await analytics.async_log_analysis(
+            user_id=user.id, username=user.username, first_name=user.first_name,
+            symbol=symbol, timeframe=timeframe, source="telegram_direct",
+            signal=raw_data.get("signal"), indicators=raw_data.get("indicators"),
+            levels=raw_data.get("levels"), trend=raw_data.get("trend"),
+            flow=raw_data.get("flow"), scenarios=raw_data.get("scenarios"),
+            response_time_ms=elapsed,
+        )
+
         await _send_analysis(update.message, result, symbol, "crypto")
     except Exception as e:
         logger.exception("Analysis error for %s", symbol)
+        await analytics.async_log_error(
+            error_type="analysis_error", details=str(e),
+            telegram_id=user.id, symbol=symbol, timeframe=timeframe,
+        )
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🔄 Try Again", callback_data="new_analysis"),
         ]])
@@ -338,6 +394,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol = user_data[user_id]["symbol"]
         market = user_data[user_id]["market"]
         dn = _display_name(symbol, market)
+        tg_user = query.from_user
 
         # Edit picker into loading state
         try:
@@ -345,8 +402,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+        t0 = time.time()
         try:
-            result = await analyze_coin(symbol, timeframe)
+            raw_data = await analyze_coin_raw(symbol, timeframe)
+            result = _format_raw(raw_data)
+            elapsed = int((time.time() - t0) * 1000)
+
+            # Log to Supabase
+            await analytics.async_log_analysis(
+                user_id=tg_user.id, username=tg_user.username, first_name=tg_user.first_name,
+                symbol=symbol, timeframe=timeframe, source="telegram_button",
+                signal=raw_data.get("signal"), indicators=raw_data.get("indicators"),
+                levels=raw_data.get("levels"), trend=raw_data.get("trend"),
+                flow=raw_data.get("flow"), scenarios=raw_data.get("scenarios"),
+                response_time_ms=elapsed,
+            )
 
             nav_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 New Analysis", callback_data="new_analysis")],
@@ -354,13 +424,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
 
             if len(result) <= 4096:
-                # Edit the loading message directly into the analysis — seamless
                 try:
                     await query.edit_message_text(result, parse_mode="HTML", reply_markup=nav_keyboard)
                 except Exception:
                     await query.message.chat.send_message(result, parse_mode="HTML", reply_markup=nav_keyboard)
             else:
-                # Too long for one message — delete loading, send chunks
                 chunks = _smart_chunk(result, 4096)
                 try:
                     await query.message.delete()
@@ -372,6 +440,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception as e:
             logger.exception("Analysis error for %s", symbol)
+            await analytics.async_log_error(
+                error_type="analysis_error", details=str(e),
+                telegram_id=tg_user.id, symbol=symbol, timeframe=timeframe,
+            )
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Try Again", callback_data="new_analysis")],
                 [InlineKeyboardButton("⬅️ Back", callback_data=f"market_{market}")],
@@ -486,17 +558,28 @@ def _start_health_server():
     logger.info("Health server started on port %d", port)
 
 
-def main():
+def main(skip_health_server: bool = False):
     from config import TELEGRAM_BOT_TOKEN
 
     if not TELEGRAM_BOT_TOKEN:
         print("ERROR: Set TELEGRAM_BOT_TOKEN in your .env file.")
         return
 
-    # Start health-check server for Render
-    _start_health_server()
+    # Start health-check server for Render (only if not started by run.py)
+    if not skip_health_server:
+        _start_health_server()
 
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    async def post_init(app):
+        """Called after the Application is fully initialized and the event loop is running."""
+        asyncio.create_task(analytics.check_signal_accuracy())
+        logger.info("Accuracy checker background task started.")
+
+    application = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("help", cmd_help))
@@ -505,7 +588,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
 
-    logger.info("Bot started.")
+    logger.info("Bot started (with analytics & accuracy checker).")
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,

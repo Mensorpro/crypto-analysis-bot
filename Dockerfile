@@ -9,8 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose health check port
-EXPOSE 8000
+# Expose dashboard port
+EXPOSE 5000
 
-# Run the bot
-CMD ["python", "telegram_bot.py"]
+# Run bot + dashboard
+CMD ["python", "run.py"]
