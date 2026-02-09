@@ -456,16 +456,34 @@ class _HealthHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
         self.wfile.write(b"OK")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+
     def log_message(self, *args):
         pass  # Silence health-check logs
 
 
+def _run_health_server(port: int):
+    """Run the health server with automatic restart on failure."""
+    while True:
+        try:
+            server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+            logger.info("Health server listening on port %d", port)
+            server.serve_forever()
+        except Exception:
+            logger.exception("Health server crashed — restarting in 5s")
+            import time
+            time.sleep(5)
+
+
 def _start_health_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    port = int(os.environ.get("PORT", 8000))
+    thread = threading.Thread(target=_run_health_server, args=(port,), daemon=True)
     thread.start()
-    logger.info("Health server on port %d", port)
+    logger.info("Health server started on port %d", port)
 
 
 def main():
