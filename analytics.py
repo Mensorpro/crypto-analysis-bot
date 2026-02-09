@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
+
+def _iso(dt: datetime) -> str:
+    """Return an ISO timestamp safe for Supabase query params (encode '+' as %2B)."""
+    return dt.isoformat().replace("+", "%2B")
+
 _HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -291,7 +296,7 @@ async def check_signal_accuracy():
                 correct_col = f"correct_{window_name}"
 
                 # Pending records for this window
-                cutoff = (now - timedelta(seconds=window_seconds)).isoformat()
+                cutoff = _iso(now - timedelta(seconds=window_seconds))
                 rows = _get(
                     "signal_accuracy",
                     f"{checked_col}=eq.false"
@@ -379,9 +384,9 @@ async def check_signal_accuracy():
 def get_overview_stats() -> Dict:
     """High-level stats for the dashboard header."""
     now = datetime.now(timezone.utc)
-    today_iso = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    week_iso = (now - timedelta(days=7)).isoformat()
-    day_iso = (now - timedelta(hours=24)).isoformat()
+    today_iso = _iso(now.replace(hour=0, minute=0, second=0, microsecond=0))
+    week_iso = _iso(now - timedelta(days=7))
+    day_iso = _iso(now - timedelta(hours=24))
 
     total_users = len(_get("bot_users", "select=id"))
     active_24h = len(_get("bot_users", f"select=id&last_seen=gte.{day_iso}"))
@@ -453,7 +458,7 @@ def get_signal_distribution() -> List[Dict]:
 
 def get_usage_over_time(days: int = 30) -> List[Dict]:
     """Analyses per day."""
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    since = _iso(datetime.now(timezone.utc) - timedelta(days=days))
     rows = _get("analyses", f"select=created_at&created_at=gte.{since}")
     if not rows:
         return []
@@ -466,7 +471,7 @@ def get_usage_over_time(days: int = 30) -> List[Dict]:
 
 def get_hourly_usage(days: int = 7) -> List[Dict]:
     """Analyses by hour-of-day (aggregated)."""
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    since = _iso(datetime.now(timezone.utc) - timedelta(days=days))
     rows = _get("analyses", f"select=created_at&created_at=gte.{since}")
     if not rows:
         return []
