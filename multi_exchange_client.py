@@ -1,12 +1,14 @@
 """
 Multi-exchange client — singleton with built-in caching.
 
-Handles Binance geo-restriction (451) by:
-  1. Trying alternate Binance API hosts (api1–api4)
-  2. Falling back to Bybit if all Binance endpoints fail
+Handles Binance geo-restriction (451) by trying multiple exchanges:
+  1. KuCoin  (works worldwide, no KYC for public data)
+  2. Bybit   (works worldwide for public data)
+  3. Gate.io (broad availability)
+  4. Binance (last resort — may be blocked on US-based hosts)
 """
 import ccxt.async_support as ccxt
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 from cache_manager import CacheManager
 import config
 import logging
@@ -14,17 +16,28 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Alternate Binance REST endpoints (same data, different CDN edges)
-BINANCE_HOSTS = [
-    "https://api1.binance.com",
-    "https://api2.binance.com",
-    "https://api3.binance.com",
-    "https://api4.binance.com",
-    "https://api.binance.com",
-]
-
-# Optional user-defined proxy (e.g. SOCKS5 or HTTP proxy)
+# Optional user-defined proxy
 EXCHANGE_PROXY = os.getenv("EXCHANGE_PROXY", "")
+
+# Exchange priority order — Binance last because it geo-blocks US servers
+EXCHANGE_CONFIGS: List[Tuple[str, dict]] = [
+    ("kucoin", {
+        "enableRateLimit": True,
+        "options": {"defaultType": "spot"},
+    }),
+    ("bybit", {
+        "enableRateLimit": True,
+        "options": {"defaultType": "spot"},
+    }),
+    ("gateio", {
+        "enableRateLimit": True,
+        "options": {"defaultType": "spot"},
+    }),
+    ("binance", {
+        "enableRateLimit": True,
+        "options": {"defaultType": "spot"},
+    }),
+]
 
 
 class MultiExchangeClient:
@@ -44,104 +57,72 @@ class MultiExchangeClient:
         self._initialized = True
         self._cache = CacheManager(ttl_seconds=config.CACHE_TTL_SECONDS)
         self._markets_loaded = False
-        self._active_exchange = None  # Will be set on first use
-        self._exchange_name = None
-
-        # Build exchange instances
-        self._binance_instances: List = []
-        self._bybit = None
+        self._active_exchange = None
+        self._exchange_name = "none"
+        self._exchanges: List[Tuple[str, ccxt.Exchange]] = []
         self._setup_exchanges()
 
     def _setup_exchanges(self):
-        """Create exchange instances with various endpoints."""
-        # Create a Binance instance for each alternate host
-        for host in BINANCE_HOSTS:
-            opts = {
-                "enableRateLimit": True,
-                "options": {"defaultType": "spot"},
-                "urls": {
-                    "api": {
-                        "public": host + "/api/v3",
-                        "private": host + "/api/v3",
-                        "sapi": host + "/sapi/v1",
-                        "sapiV2": host + "/sapi/v2",
-                        "sapiV3": host + "/sapi/v3",
-                        "sapiV4": host + "/sapi/v4",
-                    }
-                },
-            }
+        """Create exchange instances in priority order."""
+        for name, opts in EXCHANGE_CONFIGS:
             if EXCHANGE_PROXY:
                 opts["proxies"] = {
                     "http": EXCHANGE_PROXY,
                     "https": EXCHANGE_PROXY,
                 }
-            exchange = ccxt.binance(opts)
-            self._binance_instances.append(exchange)
-
-        # Bybit fallback (no geo-restriction for public data)
-        bybit_opts = {
-            "enableRateLimit": True,
-            "options": {"defaultType": "spot"},
-        }
-        if EXCHANGE_PROXY:
-            bybit_opts["proxies"] = {
-                "http": EXCHANGE_PROXY,
-                "https": EXCHANGE_PROXY,
-            }
-        self._bybit = ccxt.bybit(bybit_opts)
+            exchange_class = getattr(ccxt, name)
+            exchange = exchange_class(opts)
+            self._exchanges.append((name, exchange))
+            logger.info("Registered exchange: %s", name)
 
     @property
     def binance(self):
         """Backward-compatible property — returns the active exchange."""
         if self._active_exchange:
             return self._active_exchange
-        return self._binance_instances[0] if self._binance_instances else self._bybit
+        # Return first available
+        return self._exchanges[0][1] if self._exchanges else None
 
-    async def _try_load_markets(self, exchange, name: str) -> bool:
+    async def _try_exchange(self, name: str, exchange) -> bool:
         """Try loading markets from an exchange. Returns True on success."""
         try:
             await exchange.load_markets()
-            logger.info("Successfully connected to %s", name)
+            logger.info("✅ Connected to %s (%d markets)", name, len(exchange.markets))
             return True
         except Exception as e:
             error_str = str(e)
-            if "451" in error_str or "restricted location" in error_str.lower():
-                logger.warning("%s blocked (451 geo-restriction), trying next…", name)
+            if "451" in error_str or "restricted" in error_str.lower():
+                logger.warning("❌ %s: geo-restricted (451)", name)
+            elif "cloudflare" in error_str.lower() or "403" in error_str:
+                logger.warning("❌ %s: blocked (403/cloudflare)", name)
             else:
-                logger.warning("%s failed: %s", name, error_str[:120])
+                logger.warning("❌ %s: %s", name, error_str[:150])
             return False
 
     async def _ensure_markets(self):
-        """Load markets, trying all Binance endpoints then Bybit."""
+        """Load markets, trying each exchange in priority order."""
         if self._markets_loaded:
             return
 
-        # Try each Binance endpoint
-        for i, exchange in enumerate(self._binance_instances):
-            host = BINANCE_HOSTS[i]
-            if await self._try_load_markets(exchange, f"Binance ({host})"):
+        errors = []
+        for name, exchange in self._exchanges:
+            if await self._try_exchange(name, exchange):
                 self._active_exchange = exchange
-                self._exchange_name = f"Binance ({host})"
+                self._exchange_name = name
                 self._markets_loaded = True
                 return
-
-        # All Binance endpoints failed — try Bybit
-        logger.warning("All Binance endpoints blocked. Falling back to Bybit…")
-        if await self._try_load_markets(self._bybit, "Bybit"):
-            self._active_exchange = self._bybit
-            self._exchange_name = "Bybit"
-            self._markets_loaded = True
-            return
+            errors.append(name)
 
         raise ValueError(
-            "Could not connect to any exchange. "
-            "All Binance endpoints returned 451 (geo-restricted) and Bybit also failed. "
-            "Consider setting EXCHANGE_PROXY env var to a proxy in a non-restricted region."
+            f"Could not connect to any exchange. "
+            f"Tried: {', '.join(errors)}. "
+            f"All were blocked or unavailable from this server region. "
+            f"Consider setting EXCHANGE_PROXY env var to route through a non-restricted region."
         )
 
     async def fetch_ohlcv(self, symbol: str, timeframe: str = "15m",
                           limit: int = None) -> Dict:
-        """Fetch OHLCV with caching."""
+        """Fetch OHLCV with caching and multi-exchange fallback."""
         limit = limit or config.DEFAULT_LOOKBACK
         cache_key = f"{symbol}:{timeframe}:{limit}"
 
@@ -156,6 +137,14 @@ class MultiExchangeClient:
 
             await self._ensure_markets()
             exchange = self._active_exchange
+
+            # Check if symbol exists on active exchange
+            if symbol not in exchange.markets:
+                # Try without the exchange-specific format
+                logger.warning(
+                    "Symbol %s not on %s, checking alternatives…",
+                    symbol, self._exchange_name,
+                )
 
             ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
 
@@ -175,18 +164,23 @@ class MultiExchangeClient:
 
         except ccxt.BadSymbol:
             raise ValueError(
-                f"Symbol {symbol} not found on {self._exchange_name or 'exchange'}. "
+                f"Symbol {symbol} not found on {self._exchange_name}. "
                 "Check the pair exists (e.g. BTC/USDT)."
             )
         except ccxt.NetworkError as e:
             error_str = str(e)
-            # If we get a 451 mid-session, reset and retry
-            if "451" in error_str or "restricted location" in error_str.lower():
-                logger.warning("Got 451 mid-session, resetting exchange…")
+            # If we get a 451/blocked mid-session, reset and retry with next exchange
+            if "451" in error_str or "restricted" in error_str.lower():
+                logger.warning("Got 451 mid-session on %s, resetting…", self._exchange_name)
                 self._markets_loaded = False
                 self._active_exchange = None
+                # Remove the failed exchange from the list for this session
+                self._exchanges = [
+                    (n, ex) for n, ex in self._exchanges
+                    if n != self._exchange_name
+                ]
                 await self._ensure_markets()
-                # Retry once after switching
+                # Retry once
                 exchange = self._active_exchange
                 ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
                 if not ohlcv:
@@ -203,11 +197,11 @@ class MultiExchangeClient:
                 return data
             raise ValueError(f"Network error: {e}")
         except ccxt.ExchangeError as e:
-            raise ValueError(f"Exchange error: {e}")
+            raise ValueError(f"Exchange error ({self._exchange_name}): {e}")
         except Exception as e:
             error_msg = str(e)
             if "does not have market symbol" in error_msg:
-                raise ValueError(f"Symbol {symbol} not available.")
+                raise ValueError(f"Symbol {symbol} not available on {self._exchange_name}.")
             raise ValueError(f"API error: {error_msg}")
 
     # ── Symbol classification ─────────────────────────────────────────
@@ -232,15 +226,10 @@ class MultiExchangeClient:
 
     async def close(self):
         """Close exchange connections and reset singleton."""
-        for exchange in self._binance_instances:
+        for _, exchange in self._exchanges:
             try:
                 await exchange.close()
             except Exception:
                 pass
-        try:
-            if self._bybit:
-                await self._bybit.close()
-        except Exception:
-            pass
         MultiExchangeClient._instance = None
         self._initialized = False
