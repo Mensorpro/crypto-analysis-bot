@@ -9,9 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Render injects PORT env var (default 10000)
-EXPOSE ${PORT:-10000}
+# Render sets PORT dynamically — EXPOSE is informational only
+EXPOSE 10000
 
-# Run bot + dashboard
+# Run bot + dashboard (Flask serves on $PORT)
 CMD ["python", "run.py"]
-

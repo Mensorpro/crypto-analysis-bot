@@ -1,8 +1,8 @@
 """
 Entry point — runs Telegram bot + Flask admin dashboard together.
 
+• Flask dashboard runs in a background thread on PORT (Render-compatible)
 • Telegram bot runs on the main asyncio loop
-• Flask dashboard runs in a background thread
 • Accuracy checker runs as an asyncio background task
 """
 import os
@@ -18,13 +18,16 @@ logger = logging.getLogger(__name__)
 
 
 def start_dashboard():
-    """Launch Flask dashboard in a daemon thread."""
+    """Launch Flask dashboard in a daemon thread.
+    
+    IMPORTANT: Always uses PORT env var so Render/hosting can route traffic correctly.
+    """
     from dashboard import run_dashboard
-    port = int(os.environ.get("PORT", os.environ.get("DASHBOARD_PORT", 10000)))
+    # Always use PORT (set by Render/Koyeb), never a separate DASHBOARD_PORT
+    port = int(os.environ.get("PORT", 8000))
     thread = threading.Thread(target=run_dashboard, args=(port,), daemon=True)
     thread.start()
-    logger.info("Dashboard started on port %d", port)
-    logger.info("Health check URL: http://0.0.0.0:%d/health", port)
+    logger.info("Dashboard thread started on port %d", port)
 
 
 def main():
