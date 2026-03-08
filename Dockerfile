@@ -9,8 +9,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose dashboard port
-EXPOSE 5000
+# Render injects PORT env var (default 10000)
+EXPOSE ${PORT:-10000}
 
 # Run bot + dashboard
 CMD ["python", "run.py"]
+

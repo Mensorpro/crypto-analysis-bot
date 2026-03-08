@@ -150,10 +150,18 @@ def api_errors():
 
 
 @app.route("/health")
+@app.route("/healthz")
 @app.route("/api/ping")
 def health():
-    """Health / uptime check — no auth required."""
-    return jsonify({"status": "ok"})
+    """Health / uptime check — no auth required.
+    Use /health or /healthz for uptime monitoring (e.g. UptimeRobot, Render health checks).
+    """
+    import datetime
+    return jsonify({
+        "status": "ok",
+        "service": "crypto-analysis-bot",
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+    })
 
 
 def run_dashboard(port: int = 5000):

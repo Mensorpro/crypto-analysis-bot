@@ -20,10 +20,11 @@ logger = logging.getLogger(__name__)
 def start_dashboard():
     """Launch Flask dashboard in a daemon thread."""
     from dashboard import run_dashboard
-    port = int(os.environ.get("DASHBOARD_PORT", os.environ.get("PORT", 8000)))
+    port = int(os.environ.get("PORT", os.environ.get("DASHBOARD_PORT", 10000)))
     thread = threading.Thread(target=run_dashboard, args=(port,), daemon=True)
     thread.start()
-    logger.info("Dashboard thread started on port %d", port)
+    logger.info("Dashboard started on port %d", port)
+    logger.info("Health check URL: http://0.0.0.0:%d/health", port)
 
 
 def main():
